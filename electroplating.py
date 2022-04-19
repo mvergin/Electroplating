@@ -54,7 +54,7 @@ class Electroplating(Procedure):
         log.info("Setting up instruments")
         self.meter = Keithley2400("GPIB0::24::INSTR")
         self.meter.reset()
-        self.meter.use_front_terminals()
+        self.meter.use_rear_terminals()
         self.meter.apply_voltage()
 
         self.meter.enable_source()

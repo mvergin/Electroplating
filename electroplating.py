@@ -2,7 +2,7 @@ import logging
 import sys
 from time import sleep, perf_counter
 import numpy as np
-
+from PyQt5.QtCore import QLocale
 from pymeasure.instruments.keithley import Keithley2400
 from pymeasure.display.Qt import QtGui
 from pymeasure.display.windows import ManagedWindow
@@ -264,6 +264,7 @@ class MainWindow(ManagedWindow):
 
 if __name__ == "__main__":
     app = QtGui.QApplication(sys.argv)
+    QLocale.setDefault(QLocale(QLocale.English, QLocale.UnitedStates))
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())

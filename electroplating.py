@@ -2,16 +2,20 @@ import logging
 import sys
 from time import sleep, perf_counter
 import numpy as np
+from pathlib import Path
+from datetime import datetime
 from PyQt5.QtCore import QLocale
 from pymeasure.instruments.keithley import Keithley2400
 from pymeasure.display.Qt import QtGui
 from pymeasure.display.windows import ManagedWindow
+
 from pymeasure.experiment import (
     Procedure,
     FloatParameter,
     unique_filename,
     Results,
     BooleanParameter,
+    Parameter,
 )
 
 log = logging.getLogger("")
@@ -39,13 +43,13 @@ class Electroplating(Procedure):
         "Pulse Width", units="ms", default="10", group_by="pulse"
     )
     pulse_height = FloatParameter(
-        "Pulse Height", units="V", default="3", group_by="pulse"
+        "Pulse Height", units="V", default="1", group_by="pulse"
     )
     pause_width = FloatParameter(
         "Pause Width", units="ms", default="40", group_by="pulse"
     )
     pause_height = FloatParameter(
-        "Pause Height", units="V", default="0", group_by="pulse"
+        "Pause Height", units="V", default="0.5", group_by="pulse"
     )
 
     DATA_COLUMNS = ["Time (s)", "Current (mA)", "Voltage (V)", "Charge (mAs)"]
@@ -248,12 +252,27 @@ class MainWindow(ManagedWindow):
             x_axis="Time (s)",
             y_axis="Current (mA)",
             num_of_points=10000,
+            directory_input=True,
         )
         self.setWindowTitle("Electroplating")
         self.plot_widget.plot.showGrid(x=True, y=True)
+        self.directory = r"C:/"
+        self.sample_name = datetime.today().strftime("%Y%m%d")
 
     def queue(self):
-        directory = "EP_Measurements/"  # Change this to the desired directory
+        # directory = "EP_Measurements/"  # Change this to the desired directory
+        # print(self.sample_name)
+        dic_path = Path(self.directory) / (self.sample_name + "_1")
+        counter = 1
+        while True:
+            if not dic_path.is_dir():
+                dic_path.mkdir(parents=True)
+                break
+            else:
+                counter += 1
+                dic_path = Path(self.directory) / (self.sample_name + f"_{counter}")
+
+        directory = dic_path
         filename = unique_filename(directory, prefix="EP")
         procedure = self.make_procedure()
         results = Results(procedure, filename)

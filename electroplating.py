@@ -1,6 +1,7 @@
 import logging
 import sys
 from time import sleep, perf_counter
+from tracemalloc import start
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -54,14 +55,50 @@ class Electroplating(Procedure):
 
     DATA_COLUMNS = ["Time (s)", "Current (mA)", "Voltage (V)", "Charge (mAs)"]
 
+    def measure_open_voltage(self):
+        self.meter.reset()
+        self.meter.use_rear_terminals()
+        self.meter.apply_current()
+        coms = [
+            ":SOUR:CURR:MODE FIXED",
+            ":SENS:FUNC 'VOLT'",
+            ":SOUR:CURR:RANG MIN",
+            ":SOUR:CURR:LEV 0",
+            ":SENS:VOLT:PROT 25",
+            ":SENS:VOLT:RANG 20",
+            ":FORM:ELEM VOLT",
+        ]
+        for c in coms:
+            self.meter.write(c)
+            sleep(0.1)
+        self.meter.enable_source()
+        start_time = perf_counter()
+        while perf_counter() - start_time < 10:
+            messt1 = perf_counter()
+            mvolt = self.meter.voltage
+            messt2 = perf_counter()
+            cur_time = (
+                perf_counter() - start_time - (messt2 - messt1) / 2 + self.time_offset
+            )
+            data = {
+                "Time (s)": cur_time,
+                "Current (mA)": 0,
+                "Voltage (V)": mvolt,
+                "Charge (mAs)": 0,
+            }
+            self.emit("results", data)
+        self.time_offset = perf_counter() - start_time
+        self.meter.disable_source()
+
     def startup(self):
         log.info("Setting up instruments")
+        self.time_offset = 0
         self.meter = Keithley2400("GPIB0::24::INSTR")
+        self.measure_open_voltage()
         self.meter.reset()
         self.meter.use_rear_terminals()
         self.meter.apply_voltage()
 
-        self.meter.enable_source()
         self.meter.source_delay = 0
         self.meter.measure_concurent_functions = False
         # ??? :SOUR:VOLT:MODE FIXED
@@ -111,6 +148,7 @@ class Electroplating(Procedure):
             log.info("Starting pulsed electroplating")
 
             self.meter.source_voltage = self.pause_height
+            self.meter.enable_source()
             start_time = perf_counter()
             cur_pulse_time = perf_counter()
             while True:
@@ -148,7 +186,7 @@ class Electroplating(Procedure):
                 mcurrent_1 = mcurrent
                 mtime_1 = cur_time
                 data = {
-                    "Time (s)": cur_time,
+                    "Time (s)": cur_time + self.time_offset,
                     "Current (mA)": mcurrent,
                     "Voltage (V)": mvolt,
                     "Charge (mAs)": charge,
@@ -174,6 +212,7 @@ class Electroplating(Procedure):
             log.info("Starting constant electroplating")
 
             self.meter.source_voltage = self.voltage
+            self.meter.enable_source()
             start_time = perf_counter()
             while True:
                 messt1 = perf_counter()
@@ -196,7 +235,7 @@ class Electroplating(Procedure):
                 mcurrent_1 = mcurrent
                 mtime_1 = cur_time
                 data = {
-                    "Time (s)": cur_time,
+                    "Time (s)": cur_time + self.time_offset,
                     "Current (mA)": mcurrent,
                     "Voltage (V)": mvolt,
                     "Charge (mAs)": charge,
@@ -212,8 +251,10 @@ class Electroplating(Procedure):
                 if cur_time >= self.total_time:
                     print(len(current_list))
                     break
+        self.time_offset = self.time_offset + cur_time
 
     def shutdown(self):
+        self.measure_open_voltage()
         self.meter.write(":DISP:ENAB ON")
         self.meter.shutdown()
         log.info("Finished")

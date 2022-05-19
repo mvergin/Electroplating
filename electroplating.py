@@ -58,6 +58,7 @@ class Electroplating(Procedure):
     def measure_open_voltage(self):
         self.meter.reset()
         self.meter.use_rear_terminals()
+        # self.meter.output_off_state = "HIMP"
         self.meter.apply_current()
         coms = [
             ":SOUR:CURR:MODE FIXED",
@@ -97,6 +98,7 @@ class Electroplating(Procedure):
         self.measure_open_voltage()
         self.meter.reset()
         self.meter.use_rear_terminals()
+        # self.meter.output_off_state = "HIMP"
         self.meter.apply_voltage()
 
         self.meter.source_delay = 0

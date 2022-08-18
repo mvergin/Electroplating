@@ -6,7 +6,7 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 from PyQt5.QtCore import QLocale
-from pymeasure.instruments.keithley import Keithley2400, Keithley2450
+from pymeasure.instruments.keithley import Keithley2600
 from pymeasure.display.Qt import QtGui
 from pymeasure.display.windows import ManagedWindow
 import pyvisa
@@ -97,29 +97,28 @@ class Electroplating(Procedure):
         log.info("Setting up instruments")
         self.time_offset = 0
         # self.meter = Keithley2400("GPIB0::24::INSTR")
-        self.meter = Keithley2450(rm.list_resources()[0])
+        self.meter = Keithley2600(rm.list_resources()[0])
         # self.measure_open_voltage()
-        self.meter.reset()
-        self.meter.use_front_terminals()
+        # self.meter.reset()
+        # self.meter.use_front_terminals()
         # self.meter.output_off_state = "HIMP"
-        self.meter.apply_voltage()
+        # self.meter.apply_voltage()
 
-        self.meter.source_delay = 0
-        self.meter.measure_concurent_functions = False
+        # self.meter.source_delay = 0
+        # self.meter.measure_concurent_functions = False
         # ??? :SOUR:VOLT:MODE FIXED
         speedcoms = [
-            ":SENS:FUNC 'CURR'",
-            "SENS:AZER:ONCE",
+            "CURR:AZER OFF",
             # ":SENS:AZER:STAT OFF",
             # ":SENS:FUNC:OFF:ALL",
-            
+            ":SENS:FUNC 'CURR'",
             # ":FORM:ELEM CURR",
             # ":SENSE:AVER:STAT OFF",
             # ":SYSTEM:TIME:RESET:AUTO OFF",
             ":DISP:LIGH:STAT OFF",
         ]
         if self.measure_voltage:
-            self.meter.measure_concurent_functions = True
+            # self.meter.measure_concurent_functions = True
             speedcoms = [
                 # "CURR:AZER OFF",
                 # ":SENS:AZER:STAT OFF",
@@ -132,14 +131,19 @@ class Electroplating(Procedure):
             ]
         for c in speedcoms:
             # print(f"writing {c}")
-            self.meter.write(c)
+            # self.meter.write(c)
             sleep(0.1)
 
-        self.meter.compliance_current = self.max_current / 1000
-        self.meter.current_range = self.max_current / 1000
-
-        self.meter.current_nplc = 0.01
-        self.meter.voltage_nplc = 0.01
+        # self.meter.compliance_current = self.max_current / 1000
+        # self.meter.current_range = self.max_current / 1000
+        self.meter.ChA.compliance_current = self.max_current / 1000
+        # self.meter.ChA.compliance_current = self.max_current / 1000
+        self.meter.ChA.write("measure.nplc = 0.001")
+        self.meter.ChA.write("measure.autozero = smua.AUTOZERO_ONCE")
+        self.meter.ChA.write("measure.delay = 0")
+        self.meter.ChA.write("source.delay = 0")
+        # self.meter.current_nplc = 0.01
+        # self.meter.voltage_nplc = 0.01
 
         sleep(2)
 
@@ -156,8 +160,9 @@ class Electroplating(Procedure):
             PULSE = False
             log.info("Starting pulsed electroplating")
 
-            self.meter.source_voltage = self.pause_height
-            self.meter.enable_source()
+            self.meter.ChA.source_voltage = self.pause_height
+            # self.meter.ChA.source_voltage = self.voltage
+            self.meter.ChA.source_output = "ON"
             start_time = perf_counter()
             cur_pulse_time = perf_counter()
             while True:
@@ -165,14 +170,14 @@ class Electroplating(Procedure):
                 if PULSE:
                     if perf_counter() >= cur_pulse_time + self.pulse_width:
                         messt1 = perf_counter()
-                        self.meter.source_voltage = self.pause_height
+                        self.meter.ChA.source_voltage = self.pause_height
                         messt2 = perf_counter()
                         cur_pulse_time = perf_counter() - (messt2 - messt1) / 2
                         PULSE = False
                 else:
                     if perf_counter() >= cur_pulse_time + self.pause_width:
                         messt1 = perf_counter()
-                        self.meter.source_voltage = self.pulse_height
+                        self.meter.ChA.source_voltage = self.pulse_height
                         messt2 = perf_counter()
                         cur_pulse_time = perf_counter() - (messt2 - messt1) / 2
                         PULSE = True
@@ -180,7 +185,7 @@ class Electroplating(Procedure):
                 if self.measure_voltage:
                     mvolt, mcurrent = self.meter.current
                 else:
-                    mcurrent = self.meter.current
+                    mcurrent = self.meter.ChA.current
                     mvolt = self.voltage
                 mcurrent *= 1000
                 messt2 = perf_counter()
@@ -220,8 +225,8 @@ class Electroplating(Procedure):
             mtime_1 = 0
             log.info("Starting constant electroplating")
 
-            self.meter.source_voltage = self.voltage
-            self.meter.enable_source()
+            self.meter.ChA.source_voltage = self.voltage
+            self.meter.ChA.source_output = "ON"
             start_time = perf_counter()
             while True:
                 messt1 = perf_counter()
@@ -229,7 +234,7 @@ class Electroplating(Procedure):
                     mvolt, mcurrent = self.meter.current
 
                 else:
-                    mcurrent = self.meter.current
+                    mcurrent = self.meter.ChA.current
                     mvolt = self.voltage
                 mcurrent *= 1000
                 messt2 = perf_counter()
@@ -264,8 +269,10 @@ class Electroplating(Procedure):
 
     def shutdown(self):
         # self.measure_open_voltage()
-        self.meter.write(":DISP:LIGH:STAT ON25",)
-        self.meter.shutdown()
+        # self.meter.write(":DISP:LIGH:STAT ON50",)
+        # self.meter.shutdown()
+        self.meter.ChA.source_voltage = 0
+        self.meter.ChA.source_output = "OFF"
         log.info("Finished")
 
 

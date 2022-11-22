@@ -10,6 +10,7 @@ from pymeasure.instruments.keithley import Keithley2600
 from pymeasure.display.Qt import QtGui
 from pymeasure.display.windows import ManagedWindow
 import pyvisa
+
 rm = pyvisa.ResourceManager()
 from pymeasure.experiment import (
     Procedure,
@@ -26,35 +27,88 @@ log.addHandler(logging.NullHandler())
 
 class Electroplating(Procedure):
     pulse = BooleanParameter("Pulse Mode", default=False)
-    measure_voltage = BooleanParameter("Measure Output Voltage", default=False)
-    charge_stop = BooleanParameter("Charge Stop Mode", default=False)
+    # measure_voltage = BooleanParameter("Measure Output Voltage", default=False)
+    charge_stop = BooleanParameter(
+        "Charge Stop Mode",
+        default=False,
+        group_by="nw_charge_stop",
+        group_condition=False,
+    )
+    nw_charge_stop = BooleanParameter(
+        "Nanowire Charge Stop",
+        default=False,
+        group_by="charge_stop",
+        group_condition=False,
+    )
+    photo_calc = BooleanParameter(
+        "Photoresist",
+        default=False,
+    )
     max_charge = FloatParameter(
         "Max Charge",
-        units="mAs",
+        units="As",
         default=1000,
         group_by="charge_stop",
         group_condition=True,
     )
+    nw_dia = FloatParameter(
+        "Pore Diameter",
+        units="nm",
+        default=400,
+        group_by="nw_charge_stop",
+        group_condition=True,
+    )
+    nw_dens = FloatParameter(
+        "Pore Density",
+        default=1.5e8,
+        group_by="nw_charge_stop",
+        group_condition=True,
+    )
+    growth_area = FloatParameter(
+        "Growth Area",
+        units="mm2",
+        default=39 * 39 * np.pi / 4,
+        group_by="nw_charge_stop",
+        group_condition=True,
+    )
+    nw_height = FloatParameter(
+        "NW Height",
+        units="µm",
+        default=5,
+        group_by="nw_charge_stop",
+        group_condition=True,
+    )
+    photo_height = FloatParameter(
+        "Photoresist Height",
+        units="µm",
+        default=1.2,
+        group_by="photo_calc",
+        group_condition=True,
+    )
     voltage = FloatParameter(
-        "Applied Voltage", units="V", default=3, group_by="pulse", group_condition=False
+        "Applied Voltage",
+        units="V",
+        default=0.5,
+        group_by="pulse",
+        group_condition=False,
     )
 
     max_current = FloatParameter("Compliance Current", units="mA", default=500)
     total_time = FloatParameter("Total Time", units="s", default=10)
     pulse_width = FloatParameter(
-        "Pulse Width", units="ms", default="10", group_by="pulse"
+        "Pulse Width", units="ms", default="40", group_by="pulse"
     )
     pulse_height = FloatParameter(
-        "Pulse Height", units="V", default="1", group_by="pulse"
+        "Pulse Height", units="V", default=0.1, group_by="pulse"
     )
     pause_width = FloatParameter(
         "Pause Width", units="ms", default="40", group_by="pulse"
     )
     pause_height = FloatParameter(
-        "Pause Height", units="V", default="0.5", group_by="pulse"
+        "Pause Height", units="V", default=0.05, group_by="pulse"
     )
 
-    DATA_COLUMNS = ["Time (s)", "Current (mA)", "Voltage (V)", "Charge (mAs)"]
+    DATA_COLUMNS = ["Time (s)", "Current (mA)", "Voltage (V)", "Charge (C)"]
 
     def measure_open_voltage(self):
         self.meter.reset()
@@ -87,7 +141,7 @@ class Electroplating(Procedure):
                 "Time (s)": cur_time,
                 "Current (mA)": 0,
                 "Voltage (V)": mvolt,
-                "Charge (mAs)": 0,
+                "Charge (C)": 0,
             }
             self.emit("results", data)
         self.time_offset = perf_counter() - start_time
@@ -95,7 +149,33 @@ class Electroplating(Procedure):
 
     def startup(self):
         log.info("Setting up instruments")
+        if self.nw_charge_stop:
+            self.charge_stop = True
+            faraday_const = 96485.332
+            eff_plating = 0.99
+            cu_elecs = 2
+            cu_density = 8.96
+            cu_mass = 63.546
+            wire_area = self.nw_dia * self.nw_dia * (np.pi / 4) * 1e-9 * 1e-9
+            fillfactor = wire_area * self.nw_dens * 1 / (0.01 * 0.01)
+            # photo height in um divide by 10k for cm, growth area in mm2 divide by 1000 for cm2
+            stamp_vol = (self.photo_height / 10000) * (self.growth_area / 100)
+            if not self.photo_calc:
+                stamp_vol = 0
+            wire_vol = (self.growth_area / 100) * (self.nw_height / 10000) * fillfactor
+            vol_weight = (stamp_vol + wire_vol) * cu_density
+            cu_atoms = vol_weight / cu_mass
+            ele_mol = cu_atoms * cu_elecs
+            self.max_charge = ele_mol * faraday_const * eff_plating
+            log.info(f"{self.max_charge=}")
+            print(f"{wire_area=}")
+            print(f"{fillfactor=}")
+            print(f"{stamp_vol=}")
+            print(f"{wire_vol=}")
+            print(f"{cu_atoms=}")
+            print(f"{self.max_charge=}")
         self.time_offset = 0
+        raise NotImplementedError
         # self.meter = Keithley2400("GPIB0::24::INSTR")
         self.meter = Keithley2600(rm.list_resources()[0])
         # self.measure_open_voltage()
@@ -148,6 +228,22 @@ class Electroplating(Procedure):
         sleep(2)
 
     def execute(self):
+        if self.nw_charge_stop:
+            self.charge_stop = True
+            faraday_const = 96485.332
+            eff_plating = 0.99
+            cu_elecs = 2
+            cu_density = 8.96
+            cu_mass = 63.546
+            wire_area = self.nw_dia * self.nw_dia * np.pi / 4
+            fillfactor = wire_area * self.nw_dens * 1 / (0.01 * 0.01)
+            stamp_vol = self.photo_height * self.growth_area
+            wire_vol = self.growth_area * self.nw_height * fillfactor
+            vol_weight = (stamp_vol + wire_vol) * cu_density
+            cu_atoms = vol_weight / cu_mass
+            ele_mol = cu_atoms * cu_elecs
+            self.max_charge = ele_mol * faraday_const * eff_plating
+            log.info(f"{self.max_charge=}")
         if self.pulse:
             current_list = list()
             current_time = list()
@@ -203,7 +299,7 @@ class Electroplating(Procedure):
                     "Time (s)": cur_time + self.time_offset,
                     "Current (mA)": mcurrent,
                     "Voltage (V)": mvolt,
-                    "Charge (mAs)": charge,
+                    "Charge (C)": charge,
                 }
                 self.emit("results", data)
                 self.emit("progress", 100 * cur_time / self.total_time)
@@ -252,7 +348,7 @@ class Electroplating(Procedure):
                     "Time (s)": cur_time + self.time_offset,
                     "Current (mA)": mcurrent,
                     "Voltage (V)": mvolt,
-                    "Charge (mAs)": charge,
+                    "Charge (C)": charge,
                 }
                 self.emit("results", data)
                 self.emit("progress", 100 * cur_time / self.total_time)
@@ -281,9 +377,16 @@ class MainWindow(ManagedWindow):
         super().__init__(
             procedure_class=Electroplating,
             inputs=[
-                "measure_voltage",
+                # "measure_voltage",
                 "charge_stop",
+                "nw_charge_stop",
                 "max_charge",
+                "photo_calc",
+                "nw_dia",
+                "nw_dens",
+                "growth_area",
+                "nw_height",
+                "photo_height",
                 "pulse",
                 "max_current",
                 "total_time",
@@ -294,9 +397,16 @@ class MainWindow(ManagedWindow):
                 "voltage",
             ],
             displays=[
-                "measure_voltage",
+                # "measure_voltage",
                 "charge_stop",
+                "nw_charge_stop",
                 "max_charge",
+                "photo_calc",
+                "nw_dia",
+                "nw_dens",
+                "growth_area",
+                "nw_height",
+                "photo_height",
                 "pulse",
                 "max_current",
                 "total_time",

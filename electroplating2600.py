@@ -7,7 +7,8 @@ from pathlib import Path
 from datetime import datetime
 from PyQt5.QtCore import QLocale
 from pymeasure.instruments.keithley import Keithley2600
-from pymeasure.display.Qt import QtGui
+
+from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows import ManagedWindow
 import pyvisa
 
@@ -18,15 +19,52 @@ from pymeasure.experiment import (
     unique_filename,
     Results,
     BooleanParameter,
+    ListParameter,
     Parameter,
 )
+
+FARADAY = 96485.332123
+material_dict = {
+    "copper": {
+        "ele_per_depos": 1,
+        "plating_eff": 0.99,
+        "density": 8.96,
+        "atom_mass": 63.546,
+    }
+}
+
 
 log = logging.getLogger("")
 log.addHandler(logging.NullHandler())
 
 
+def calc_charge_plating(nw_dia, nw_height, photo_height, growth_area):
+    faraday_const = 96485.332
+    eff_plating = 0.99
+    cu_elecs = 2
+    cu_density = 8.96
+    cu_mass = 63.546
+    wire_area = self.nw_dia * self.nw_dia * (np.pi / 4) * 1e-9 * 1e-9
+    fillfactor = wire_area * self.nw_dens * 1 / (0.01 * 0.01)
+    # photo height in um divide by 10k for cm, growth area in mm2 divide by 1000 for cm2
+    stamp_vol = (self.photo_height / 10000) * (self.growth_area / 100)
+    if not self.photo_calc:
+        stamp_vol = 0
+    wire_vol = (self.growth_area / 100) * (self.nw_height / 10000) * fillfactor
+    vol_weight = (stamp_vol + wire_vol) * cu_density
+    cu_atoms = vol_weight / cu_mass
+    ele_mol = cu_atoms * cu_elecs
+    self.max_charge = ele_mol * faraday_const * eff_plating
+    return 1
+
+
 class Electroplating(Procedure):
-    pulse = BooleanParameter("Pulse Mode", default=False)
+    material_sel = ListParameter(
+        "Material Selection",
+        [k for k in material_dict.keys()],
+        default="copper",
+    )
+    pulse = BooleanParameter("Pulse Mode", default=True)
     # measure_voltage = BooleanParameter("Measure Output Voltage", default=False)
     charge_stop = BooleanParameter(
         "Charge Stop Mode",
@@ -46,8 +84,8 @@ class Electroplating(Procedure):
     )
     max_charge = FloatParameter(
         "Max Charge",
-        units="As",
-        default=1000,
+        units="mC",
+        default=10000,
         group_by="charge_stop",
         group_condition=True,
     )
@@ -73,14 +111,14 @@ class Electroplating(Procedure):
     )
     nw_height = FloatParameter(
         "NW Height",
-        units="µm",
+        units="um",
         default=5,
         group_by="nw_charge_stop",
         group_condition=True,
     )
     photo_height = FloatParameter(
         "Photoresist Height",
-        units="µm",
+        units="um",
         default=1.2,
         group_by="photo_calc",
         group_condition=True,
@@ -108,7 +146,7 @@ class Electroplating(Procedure):
         "Pause Height", units="V", default=0.05, group_by="pulse"
     )
 
-    DATA_COLUMNS = ["Time (s)", "Current (mA)", "Voltage (V)", "Charge (C)"]
+    DATA_COLUMNS = ["Time (s)", "Current (mA)", "Voltage (V)", "Charge (mC)"]
 
     def measure_open_voltage(self):
         self.meter.reset()
@@ -141,7 +179,7 @@ class Electroplating(Procedure):
                 "Time (s)": cur_time,
                 "Current (mA)": 0,
                 "Voltage (V)": mvolt,
-                "Charge (C)": 0,
+                "Charge (mC)": 0,
             }
             self.emit("results", data)
         self.time_offset = perf_counter() - start_time
@@ -211,7 +249,7 @@ class Electroplating(Procedure):
             ]
         for c in speedcoms:
             # print(f"writing {c}")
-            # self.meter.write(c)
+            # self.meter.write(mC)
             sleep(0.1)
 
         # self.meter.compliance_current = self.max_current / 1000
@@ -299,7 +337,7 @@ class Electroplating(Procedure):
                     "Time (s)": cur_time + self.time_offset,
                     "Current (mA)": mcurrent,
                     "Voltage (V)": mvolt,
-                    "Charge (C)": charge,
+                    "Charge (mC)": charge,
                 }
                 self.emit("results", data)
                 self.emit("progress", 100 * cur_time / self.total_time)
@@ -348,7 +386,7 @@ class Electroplating(Procedure):
                     "Time (s)": cur_time + self.time_offset,
                     "Current (mA)": mcurrent,
                     "Voltage (V)": mvolt,
-                    "Charge (C)": charge,
+                    "Charge (mC)": charge,
                 }
                 self.emit("results", data)
                 self.emit("progress", 100 * cur_time / self.total_time)
@@ -424,9 +462,10 @@ class MainWindow(ManagedWindow):
         self.setWindowTitle("Electroplating")
         self.plot_widget.plot.showGrid(x=True, y=True)
         self.directory = r"C:/"
-        self.sample_name = datetime.today().strftime("%Y%m%d")
+        self.sample_name = "EP" + datetime.today().strftime("%Y%m%d")
 
     def queue(self):
+        # print(f"{self.inputs}")
         # directory = "EP_Measurements/"  # Change this to the desired directory
         # print(self.sample_name)
         dic_path = Path(self.directory) / (self.sample_name + "_1")
@@ -442,6 +481,7 @@ class MainWindow(ManagedWindow):
         directory = dic_path
         filename = unique_filename(directory, prefix="EP")
         procedure = self.make_procedure()
+        print(procedure)
         results = Results(procedure, filename)
         experiment = self.new_experiment(results)
 
@@ -449,7 +489,7 @@ class MainWindow(ManagedWindow):
 
 
 if __name__ == "__main__":
-    app = QtGui.QApplication(sys.argv)
+    app = QtWidgets.QApplication(sys.argv)
     QLocale.setDefault(QLocale(QLocale.English, QLocale.UnitedStates))
     window = MainWindow()
     window.show()

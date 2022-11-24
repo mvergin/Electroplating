@@ -25,12 +25,20 @@ from pymeasure.experiment import (
 
 FARADAY = 96485.332123
 material_dict = {
-    "copper": {
-        "ele_per_depos": 1,
+    "Cu Ele V1": {
+        "ele_per_depos": 2,
         "plating_eff": 0.99,
         "density": 8.96,
         "atom_mass": 63.546,
-    }
+        "composition": "1M CuSo4, 0.25M Su",
+    },
+    "Cu Ele V2": {
+        "ele_per_depos": 2,
+        "plating_eff": 0.99,
+        "density": 8.96,
+        "atom_mass": 63.546,
+        "composition": "1M CuSo4, 0.25M Su, 60ppm HCL",
+    },
 }
 
 
@@ -38,31 +46,31 @@ log = logging.getLogger("")
 log.addHandler(logging.NullHandler())
 
 
-def calc_charge_plating(nw_dia, nw_height, photo_height, growth_area):
-    faraday_const = 96485.332
-    eff_plating = 0.99
-    cu_elecs = 2
-    cu_density = 8.96
-    cu_mass = 63.546
-    wire_area = self.nw_dia * self.nw_dia * (np.pi / 4) * 1e-9 * 1e-9
-    fillfactor = wire_area * self.nw_dens * 1 / (0.01 * 0.01)
-    # photo height in um divide by 10k for cm, growth area in mm2 divide by 1000 for cm2
-    stamp_vol = (self.photo_height / 10000) * (self.growth_area / 100)
-    if not self.photo_calc:
-        stamp_vol = 0
-    wire_vol = (self.growth_area / 100) * (self.nw_height / 10000) * fillfactor
-    vol_weight = (stamp_vol + wire_vol) * cu_density
-    cu_atoms = vol_weight / cu_mass
-    ele_mol = cu_atoms * cu_elecs
-    self.max_charge = ele_mol * faraday_const * eff_plating
-    return 1
+def calc_charge_plating(
+    nw_dia, nw_dens, nw_height, photo_height, growth_area, material="Cu Ele V1"
+):
+    mat_specs = material_dict[material]
+    eff_plating = mat_specs["plating_eff"]
+    elecs = mat_specs["ele_per_depos"]
+    density = mat_specs["density"]
+    mass = mat_specs["atom_mass"]
+    wire_area = nw_dia * nw_dia * (np.pi / 4) * 1e-9 * 1e-9
+    fillfactor = wire_area * nw_dens * 1 / (0.01 * 0.01)
+    # photo height in um divide by 10k for cm, growth area in mm2 divide by 100 for cm2
+    stamp_vol = (photo_height / 10000) * (growth_area / 100)
+    wire_vol = (growth_area / 100) * (nw_height / 10000) * fillfactor
+    vol_weight = (stamp_vol + wire_vol) * density
+    cu_atoms = vol_weight / mass
+    ele_mol = cu_atoms * elecs
+    max_charge = ele_mol * FARADAY * eff_plating
+    return max_charge
 
 
 class Electroplating(Procedure):
     material_sel = ListParameter(
         "Material Selection",
         [k for k in material_dict.keys()],
-        default="copper",
+        default="Cu Ele V1",
     )
     pulse = BooleanParameter("Pulse Mode", default=True)
     # measure_voltage = BooleanParameter("Measure Output Voltage", default=False)
@@ -132,7 +140,7 @@ class Electroplating(Procedure):
     )
 
     max_current = FloatParameter("Compliance Current", units="mA", default=500)
-    total_time = FloatParameter("Total Time", units="s", default=10)
+    total_time = FloatParameter("Total Time", units="s", default=3600 * 4)
     pulse_width = FloatParameter(
         "Pulse Width", units="ms", default="40", group_by="pulse"
     )
@@ -188,34 +196,31 @@ class Electroplating(Procedure):
     def startup(self):
         log.info("Setting up instruments")
         if self.nw_charge_stop:
-            self.charge_stop = True
-            faraday_const = 96485.332
-            eff_plating = 0.99
-            cu_elecs = 2
-            cu_density = 8.96
-            cu_mass = 63.546
-            wire_area = self.nw_dia * self.nw_dia * (np.pi / 4) * 1e-9 * 1e-9
-            fillfactor = wire_area * self.nw_dens * 1 / (0.01 * 0.01)
-            # photo height in um divide by 10k for cm, growth area in mm2 divide by 1000 for cm2
-            stamp_vol = (self.photo_height / 10000) * (self.growth_area / 100)
             if not self.photo_calc:
-                stamp_vol = 0
-            wire_vol = (self.growth_area / 100) * (self.nw_height / 10000) * fillfactor
-            vol_weight = (stamp_vol + wire_vol) * cu_density
-            cu_atoms = vol_weight / cu_mass
-            ele_mol = cu_atoms * cu_elecs
-            self.max_charge = ele_mol * faraday_const * eff_plating
+                self.max_charge = calc_charge_plating(
+                    nw_dia=self.nw_dia,
+                    nw_dens=self.nw_dens,
+                    nw_height=self.nw_height,
+                    photo_height=0,
+                    growth_area=self.growth_area,
+                    material=self.material_sel,
+                )
+            else:
+                self.max_charge = calc_charge_plating(
+                    nw_dia=self.nw_dia,
+                    nw_dens=self.nw_dens,
+                    nw_height=self.nw_height,
+                    photo_height=self.photo_height,
+                    growth_area=self.growth_area,
+                    material=self.material_sel,
+                )
+            self.charge_stop = True
             log.info(f"{self.max_charge=}")
-            print(f"{wire_area=}")
-            print(f"{fillfactor=}")
-            print(f"{stamp_vol=}")
-            print(f"{wire_vol=}")
-            print(f"{cu_atoms=}")
             print(f"{self.max_charge=}")
         self.time_offset = 0
-        raise NotImplementedError
+        # raise NotImplementedError
         # self.meter = Keithley2400("GPIB0::24::INSTR")
-        self.meter = Keithley2600(rm.list_resources()[0])
+        # self.meter = Keithley2600(rm.list_resources()[0])
         # self.measure_open_voltage()
         # self.meter.reset()
         # self.meter.use_front_terminals()
@@ -270,16 +275,16 @@ class Electroplating(Procedure):
             self.charge_stop = True
             faraday_const = 96485.332
             eff_plating = 0.99
-            cu_elecs = 2
-            cu_density = 8.96
-            cu_mass = 63.546
+            elecs = 2
+            density = 8.96
+            mass = 63.546
             wire_area = self.nw_dia * self.nw_dia * np.pi / 4
             fillfactor = wire_area * self.nw_dens * 1 / (0.01 * 0.01)
             stamp_vol = self.photo_height * self.growth_area
             wire_vol = self.growth_area * self.nw_height * fillfactor
-            vol_weight = (stamp_vol + wire_vol) * cu_density
-            cu_atoms = vol_weight / cu_mass
-            ele_mol = cu_atoms * cu_elecs
+            vol_weight = (stamp_vol + wire_vol) * density
+            cu_atoms = vol_weight / mass
+            ele_mol = cu_atoms * elecs
             self.max_charge = ele_mol * faraday_const * eff_plating
             log.info(f"{self.max_charge=}")
         if self.pulse:
@@ -416,6 +421,7 @@ class MainWindow(ManagedWindow):
             procedure_class=Electroplating,
             inputs=[
                 # "measure_voltage",
+                "material_sel",
                 "charge_stop",
                 "nw_charge_stop",
                 "max_charge",
@@ -436,28 +442,29 @@ class MainWindow(ManagedWindow):
             ],
             displays=[
                 # "measure_voltage",
-                "charge_stop",
-                "nw_charge_stop",
-                "max_charge",
-                "photo_calc",
-                "nw_dia",
-                "nw_dens",
-                "growth_area",
-                "nw_height",
-                "photo_height",
-                "pulse",
-                "max_current",
-                "total_time",
-                "pulse_width",
-                "pulse_height",
-                "pause_width",
-                "pause_height",
-                "voltage",
+                # "charge_stop",
+                # "nw_charge_stop",
+                # "max_charge",
+                # "photo_calc",
+                # "nw_dia",
+                # "nw_dens",
+                # "growth_area",
+                # "nw_height",
+                # # "photo_height",
+                # "pulse",
+                # "max_current",
+                # "total_time",
+                # "pulse_width",
+                # "pulse_height",
+                # "pause_width",
+                # "pause_height",
+                # "voltage",
             ],
             x_axis="Time (s)",
             y_axis="Current (mA)",
             num_of_points=10000,
             directory_input=True,
+            linewidth=1,
         )
         self.setWindowTitle("Electroplating")
         self.plot_widget.plot.showGrid(x=True, y=True)
@@ -479,6 +486,7 @@ class MainWindow(ManagedWindow):
                 dic_path = Path(self.directory) / (self.sample_name + f"_{counter}")
 
         directory = dic_path
+        global filename
         filename = unique_filename(directory, prefix="EP")
         procedure = self.make_procedure()
         print(procedure)

@@ -1,5 +1,7 @@
 import logging
+import shutil
 import sys
+import subprocess
 from time import sleep, perf_counter
 from tracemalloc import start
 import numpy as np
@@ -11,6 +13,7 @@ from pymeasure.instruments.keithley import Keithley2600
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows import ManagedWindow
 import pyvisa
+from constants import ele_dict, membrane_dict
 
 rm = pyvisa.ResourceManager()
 from pymeasure.experiment import (
@@ -24,32 +27,22 @@ from pymeasure.experiment import (
 )
 
 FARADAY = 96485.332123
-material_dict = {
-    "Cu Ele V1": {
-        "ele_per_depos": 2,
-        "plating_eff": 0.99,
-        "density": 8.96,
-        "atom_mass": 63.546,
-        "composition": "1M CuSo4, 0.25M Su",
-    },
-    "Cu Ele V2": {
-        "ele_per_depos": 2,
-        "plating_eff": 0.99,
-        "density": 8.96,
-        "atom_mass": 63.546,
-        "composition": "1M CuSo4, 0.25M Su, 60ppm HCL",
-    },
-}
 
 
 log = logging.getLogger("")
 log.addHandler(logging.NullHandler())
 
 
+def calc_fill_factor(nw_dia, nw_dens):
+    wire_area = nw_dia * nw_dia * (np.pi / 4) * 1e-9 * 1e-9
+    fillfactor = wire_area * nw_dens * 1 / (0.01 * 0.01)
+    return fillfactor
+
+
 def calc_charge_plating(
     nw_dia, nw_dens, nw_height, photo_height, growth_area, material="Cu Ele V1"
 ):
-    mat_specs = material_dict[material]
+    mat_specs = ele_dict[material]
     eff_plating = mat_specs["plating_eff"]
     elecs = mat_specs["ele_per_depos"]
     density = mat_specs["density"]
@@ -60,17 +53,23 @@ def calc_charge_plating(
     stamp_vol = (photo_height / 10000) * (growth_area / 100)
     wire_vol = (growth_area / 100) * (nw_height / 10000) * fillfactor
     vol_weight = (stamp_vol + wire_vol) * density
+    # print(vol_weight)
     cu_atoms = vol_weight / mass
     ele_mol = cu_atoms * elecs
-    max_charge = ele_mol * FARADAY * eff_plating
+    max_charge = ele_mol * FARADAY / eff_plating
     return max_charge
 
 
 class Electroplating(Procedure):
     material_sel = ListParameter(
         "Material Selection",
-        [k for k in material_dict.keys()],
+        [k for k in ele_dict.keys()],
         default="Cu Ele V1",
+    )
+    membrane_sel = ListParameter(
+        "Membrane Selection",
+        [k for k in membrane_dict.keys()],
+        default=list(membrane_dict.keys())[0],
     )
     pulse = BooleanParameter("Pulse Mode", default=True)
     # measure_voltage = BooleanParameter("Measure Output Voltage", default=False)
@@ -97,19 +96,19 @@ class Electroplating(Procedure):
         group_by="charge_stop",
         group_condition=True,
     )
-    nw_dia = FloatParameter(
-        "Pore Diameter",
-        units="nm",
-        default=400,
-        group_by="nw_charge_stop",
-        group_condition=True,
-    )
-    nw_dens = FloatParameter(
-        "Pore Density",
-        default=1.5e8,
-        group_by="nw_charge_stop",
-        group_condition=True,
-    )
+    # nw_dia = FloatParameter(
+    #     "Pore Diameter",
+    #     units="nm",
+    #     default=400,
+    #     group_by="nw_charge_stop",
+    #     group_condition=True,
+    # )
+    # nw_dens = FloatParameter(
+    #     "Pore Density",
+    #     default=1.5e8,
+    #     group_by="nw_charge_stop",
+    #     group_condition=True,
+    # )
     growth_area = FloatParameter(
         "Growth Area",
         units="mm2",
@@ -153,6 +152,7 @@ class Electroplating(Procedure):
     pause_height = FloatParameter(
         "Pause Height", units="V", default=0.05, group_by="pulse"
     )
+    sample_notes = Parameter("Sample Notes", default="")
 
     DATA_COLUMNS = ["Time (s)", "Current (mA)", "Voltage (V)", "Charge (mC)"]
 
@@ -196,10 +196,13 @@ class Electroplating(Procedure):
     def startup(self):
         log.info("Setting up instruments")
         if self.nw_charge_stop:
+            current_membrane = membrane_dict[self.membrane_sel]
+            nw_dia = int(current_membrane["nw diameter"])
+            nw_dens = float(current_membrane["nw dens"])
             if not self.photo_calc:
                 self.max_charge = calc_charge_plating(
-                    nw_dia=self.nw_dia,
-                    nw_dens=self.nw_dens,
+                    nw_dia=nw_dia,
+                    nw_dens=nw_dens,
                     nw_height=self.nw_height,
                     photo_height=0,
                     growth_area=self.growth_area,
@@ -207,8 +210,8 @@ class Electroplating(Procedure):
                 )
             else:
                 self.max_charge = calc_charge_plating(
-                    nw_dia=self.nw_dia,
-                    nw_dens=self.nw_dens,
+                    nw_dia=nw_dia,
+                    nw_dens=nw_dens,
                     nw_height=self.nw_height,
                     photo_height=self.photo_height,
                     growth_area=self.growth_area,
@@ -216,7 +219,7 @@ class Electroplating(Procedure):
                 )
             self.charge_stop = True
             log.info(f"{self.max_charge=}")
-            print(f"{self.max_charge=}")
+            # print(f"{self.max_charge=}")
         self.time_offset = 0
         # raise NotImplementedError
         # self.meter = Keithley2400("GPIB0::24::INSTR")
@@ -271,22 +274,6 @@ class Electroplating(Procedure):
         sleep(2)
 
     def execute(self):
-        if self.nw_charge_stop:
-            self.charge_stop = True
-            faraday_const = 96485.332
-            eff_plating = 0.99
-            elecs = 2
-            density = 8.96
-            mass = 63.546
-            wire_area = self.nw_dia * self.nw_dia * np.pi / 4
-            fillfactor = wire_area * self.nw_dens * 1 / (0.01 * 0.01)
-            stamp_vol = self.photo_height * self.growth_area
-            wire_vol = self.growth_area * self.nw_height * fillfactor
-            vol_weight = (stamp_vol + wire_vol) * density
-            cu_atoms = vol_weight / mass
-            ele_mol = cu_atoms * elecs
-            self.max_charge = ele_mol * faraday_const * eff_plating
-            log.info(f"{self.max_charge=}")
         if self.pulse:
             current_list = list()
             current_time = list()
@@ -298,7 +285,10 @@ class Electroplating(Procedure):
             self.pause_width /= 1000
             PULSE = False
             log.info("Starting pulsed electroplating")
-
+            subprocess.Popen(
+                [sys.executable, "telegram_sender.py", "START"],
+                stdout=subprocess.DEVNULL,
+            )
             self.meter.ChA.source_voltage = self.pause_height
             # self.meter.ChA.source_voltage = self.voltage
             self.meter.ChA.source_output = "ON"
@@ -412,7 +402,22 @@ class Electroplating(Procedure):
         # self.meter.shutdown()
         self.meter.ChA.source_voltage = 0
         self.meter.ChA.source_output = "OFF"
+        subprocess.Popen(
+            [sys.executable, "telegram_sender.py", "FINISHED"],
+            stdout=subprocess.DEVNULL,
+        )
         log.info("Finished")
+        log.info("Attempt copying to Johann")
+        with open("final_location.txt", "r", encoding="utf-8") as f:
+            dst = Path(f.read().strip())
+        global filename
+        src = Path(filename)
+        if dst.is_dir():
+            shutil.copytree(src.parent, dst / src.parent.name)
+            subprocess.Popen(
+                [sys.executable, "plot_ep_results.py", str(dst)],
+                stdout=subprocess.DEVNULL,
+            )
 
 
 class MainWindow(ManagedWindow):
@@ -422,12 +427,13 @@ class MainWindow(ManagedWindow):
             inputs=[
                 # "measure_voltage",
                 "material_sel",
+                "membrane_sel",
                 "charge_stop",
                 "nw_charge_stop",
                 "max_charge",
                 "photo_calc",
-                "nw_dia",
-                "nw_dens",
+                # "nw_dia",
+                # "nw_dens",
                 "growth_area",
                 "nw_height",
                 "photo_height",
@@ -439,6 +445,7 @@ class MainWindow(ManagedWindow):
                 "pause_width",
                 "pause_height",
                 "voltage",
+                "sample_notes",
             ],
             displays=[
                 # "measure_voltage",
@@ -469,13 +476,14 @@ class MainWindow(ManagedWindow):
         self.setWindowTitle("Electroplating")
         self.plot_widget.plot.showGrid(x=True, y=True)
         self.directory = r"C:/"
-        self.sample_name = "EP" + datetime.today().strftime("%Y%m%d")
+        self.sample_name = "Additional Sample Name"
+        self.sample_id = "EP" + datetime.today().strftime("%Y%m%d")
 
     def queue(self):
         # print(f"{self.inputs}")
         # directory = "EP_Measurements/"  # Change this to the desired directory
         # print(self.sample_name)
-        dic_path = Path(self.directory) / (self.sample_name + "_1")
+        dic_path = Path(self.directory) / (self.sample_id + "_1")
         counter = 1
         while True:
             if not dic_path.is_dir():
@@ -483,13 +491,14 @@ class MainWindow(ManagedWindow):
                 break
             else:
                 counter += 1
-                dic_path = Path(self.directory) / (self.sample_name + f"_{counter}")
+                dic_path = Path(self.directory) / (self.sample_id + f"_{counter}")
 
         directory = dic_path
         global filename
         filename = unique_filename(directory, prefix="EP")
+        print(filename)
         procedure = self.make_procedure()
-        print(procedure)
+        # print(procedure)
         results = Results(procedure, filename)
         experiment = self.new_experiment(results)
 

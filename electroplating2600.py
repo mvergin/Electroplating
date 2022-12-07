@@ -200,7 +200,7 @@ class Electroplating(Procedure):
             nw_dia = int(current_membrane["nw diameter"])
             nw_dens = float(current_membrane["nw dens"])
             if not self.photo_calc:
-                self.max_charge = calc_charge_plating(
+                self.max_charge = 1000 * calc_charge_plating(
                     nw_dia=nw_dia,
                     nw_dens=nw_dens,
                     nw_height=self.nw_height,
@@ -209,7 +209,7 @@ class Electroplating(Procedure):
                     material=self.material_sel,
                 )
             else:
-                self.max_charge = calc_charge_plating(
+                self.max_charge = 1000 * calc_charge_plating(
                     nw_dia=nw_dia,
                     nw_dens=nw_dens,
                     nw_height=self.nw_height,

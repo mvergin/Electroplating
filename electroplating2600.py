@@ -139,7 +139,13 @@ class Electroplating(Procedure):
     )
 
     max_current = FloatParameter("Compliance Current", units="mA", default=500)
-    total_time = FloatParameter("Total Time", units="s", default=3600 * 4)
+    total_time = FloatParameter(
+        "Total Time",
+        units="s",
+        default=3600 * 4,
+        group_by="nw_charge_stop",
+        group_condition=False,
+    )
     pulse_width = FloatParameter(
         "Pulse Width", units="ms", default="40", group_by="pulse"
     )
@@ -194,6 +200,7 @@ class Electroplating(Procedure):
         self.meter.disable_source()
 
     def startup(self):
+        self.measure_voltage = False
         log.info("Setting up instruments")
         if self.nw_charge_stop:
             current_membrane = membrane_dict[self.membrane_sel]
@@ -223,7 +230,7 @@ class Electroplating(Procedure):
         self.time_offset = 0
         # raise NotImplementedError
         # self.meter = Keithley2400("GPIB0::24::INSTR")
-        # self.meter = Keithley2600(rm.list_resources()[0])
+        self.meter = Keithley2600(rm.list_resources()[0])
         # self.measure_open_voltage()
         # self.meter.reset()
         # self.meter.use_front_terminals()
@@ -243,18 +250,18 @@ class Electroplating(Procedure):
             # ":SYSTEM:TIME:RESET:AUTO OFF",
             ":DISP:LIGH:STAT OFF",
         ]
-        if self.measure_voltage:
-            # self.meter.measure_concurent_functions = True
-            speedcoms = [
-                # "CURR:AZER OFF",
-                # ":SENS:AZER:STAT OFF",
-                # ":SENS:FUNC:OFF:ALL",
-                ":SENS:FUNC 'CURR'",
-                # ":FORM:ELEM VOLT,CURR",
-                # ":SENSE:AVER:STAT OFF",
-                # ":SYSTEM:TIME:RESET:AUTO ON",
-                ":DISP:LIGH:STAT OFF",
-            ]
+        # if self.measure_voltage:
+        #     # self.meter.measure_concurent_functions = True
+        #     speedcoms = [
+        #         # "CURR:AZER OFF",
+        #         # ":SENS:AZER:STAT OFF",
+        #         # ":SENS:FUNC:OFF:ALL",
+        #         ":SENS:FUNC 'CURR'",
+        #         # ":FORM:ELEM VOLT,CURR",
+        #         # ":SENSE:AVER:STAT OFF",
+        #         # ":SYSTEM:TIME:RESET:AUTO ON",
+        #         ":DISP:LIGH:STAT OFF",
+        #     ]
         for c in speedcoms:
             # print(f"writing {c}")
             # self.meter.write(mC)
@@ -438,7 +445,7 @@ class MainWindow(ManagedWindow):
                 "nw_height",
                 "photo_height",
                 "pulse",
-                "max_current",
+                # "max_current",
                 "total_time",
                 "pulse_width",
                 "pulse_height",
